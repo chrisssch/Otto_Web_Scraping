@@ -1,0 +1,116 @@
+---
+title: "Web scraping with R: Online shop example"
+author: "Christoph Schauer"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This R markdown document showcases scraping product data from the German online shop [Otto.de](www.otto.de) using rvest, the SelectorGadget plugin for Chrome (selectorgadget.com), and some programming in R. This combination doesn't actually work all that well on this website - either I am doing something wrong or the website doesn't want to be scraped that easily, but it'll do fine for practice.
+
+## Code
+
+### Load required packages
+```{r, eval = FALSE, message = FALSE}
+library(rvest)
+library(stringr)
+```
+rvest is usd for scraping, stringr for some string manipulations.
+
+### Define the web pages that will be scraped 
+
+```{r, eval = FALSE}
+url <- "https://www.otto.de/damen/mode/kleider/strandkleider"
+products_per_page <- 12
+pages <- 20
+url_vector <- str_c(url, "/?p=", 1:pages, "&ps=", products_per_page) 
+```
+
+In this example, we scrape the product category beach dresses. We set the number of products shown per shop page to 12 and the number of pages we want to the number of pages for this category, 20. All of that is then combined to a vector containing all URLs that will be scraped. The default number of products shown per page is 72, but limiting the number of products shown can help with scraping.
+
+### Define a function that scrapes product details from each product page on one shop page
+
+```{r, eval = FALSE}
+otto_details <- function() {
+
+     storage <- list()
+     session <- html_session(url_vector[j])
+     product_link <- read_html(url_vector[j]) %>% html_nodes(".name") %>% 
+          html_text() %>% str_trim()
+     Sys.sleep(1)
+
+     for (i in product_link) {
+          Sys.sleep(1)
+
+          htmlpage <- session %>% follow_link(i) %>% read_html()
+          name <- htmlpage %>% html_nodes(".prd_shortInfo__variationName") %>% 
+               html_text() %>% str_trim()
+          article_number <- htmlpage %>% html_nodes(".js_prd_detailShortInfo__articleNr span") %>% 
+               html_text() %>% str_trim()
+          price <- htmlpage %>% html_nodes(".prd_price__amount") %>% 
+               html_text() %>% str_trim()
+          
+          price_old <- as.character("n/a")
+          x <- htmlpage %>% html_nodes(".prd_price__oldAmount") %>% html_text() %>% str_trim()
+          if (length(x) > 0) {price_old <- x}
+          
+          price_reduced <- as.character("n/a")
+          x <- htmlpage %>% html_nodes(".prd_price__amount--reduced") %>% html_text() %>% str_trim()
+          if (length(x) > 0) {price_reduced <- x}
+          
+          storage[[i]] <- c(name, article_number, price, price_old, price_reduced)
+     }
+     return(storage)
+}
+```
+
+This function scrapes the product name, article number, price, regular price, and sale price from each product page i on one shop page j. If a product is not on sale, price_old and price_reduced are set to n/a. 
+
+### Scrape the websites
+
+```{r, eval = FALSE}
+output <- list()
+
+for (j in 2:pages) {
+     storage <- otto_details()
+     storage2 <- data.frame(t(sapply(storage,c)), row.names = NULL)
+     output[[j]] <- storage2
+}
+
+output2 <- data.frame(X1 = as.character(), X2 = as.character(), X3 = as.character(), 
+                      X4 = as.character(), X5 =as.character())
+for (j in 2:pages) {
+     output2 <- rbind(output2, output[[j]])
+}
+colnames(output2) <- c("name", "article_number", "price", "price_old", "price_reduced")
+```
+
+This function does not scrape the first page, because limiting the number of products shown to 24 doest not work on page 1. The first 24 products on page 1 would have to be scraped separately, or the duplicate products removed later.
+
+### Attach brands to product data
+
+```{r, eval = FALSE}
+brand_list <- read_html(url_vector[1]) %>% 
+     html_nodes(".js_filteredFacetValues .san-count") %>%
+     html_text() %>%
+     str_trim()
+
+output2$brand <- as.character("n/a")
+for (k in 1:length(brand_list)) {
+     output2$brand[str_detect(output2$name, brand_list[k]) == TRUE] <- brand_list[k]
+}
+```
+The brand elements cannot be scraped from the website for some reason, therefore they have to be extracted from the product names.
+
+### Results and summary
+
+```{r, eval = FALSE}
+beach_dresses <- output2
+head(beach_dresses, 20)
+```
+
+When evaluating the final data frame beach_dresses, two things become apparent. First, not for all products were details scraped - as I said in the beginning, this online shop might not have been the perfect example for this reason. The data frame contains less than the total 228 observations. Second, the brand column is empty for many products. That is because many brand names are spelled differently in the product names than in the "select brand" field on the website from which they were scraped. These brands would have to be added manually. 
